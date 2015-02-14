@@ -75,7 +75,7 @@ def main():
         for event in pygame.event.get():
             if event.type == KEYDOWN:
                 if event.key == K_ESCAPE:
-                    terminate() # terminate if the KEYUP event was for the Esc key
+                    terminate() # terminate if the KEYDOWN event was for the Esc key
                 elif event.key == K_SPACE:
                     DISPLAYSURF.fill(WHITE)
                     pygame.display.update()
@@ -151,7 +151,6 @@ def idleScreen():
     CAMERA.preview_fullscreen = False
     CAMERA.resolution = preview_resolution
     CAMERA.preview_window = (GRID_W_PX * (preview_x + preview_pad),GRID_H_PX * (preview_y + preview_pad),GRID_W_PX * (preview_width - (2 * preview_pad)),GRID_H_PX * (preview_height - (2 * preview_pad)))
-    #CAMERA.preview_window = preview_window
     CAMERA.preview_alpha = preview_alpha
     CAMERA.led = False
     DISPLAYSURF.fill(BGCOLOR)
