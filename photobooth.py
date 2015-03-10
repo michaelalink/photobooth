@@ -1,9 +1,11 @@
-import os, pygame, time, picamera, pgmagick, io, sys
+#!/usr/bin/python
+from __future__ import division
+import os, pygame, time, picamera, io, sys, Image
 from pygame.locals import *
+import RPi.GPIO as GPIO
+
 
 FPS = 25
-
-
 #               R    G    B    A
 WHITE       = (255, 255, 255, 255)
 GRAY        = (185, 185, 185, 255)
@@ -12,6 +14,15 @@ DARKBLUE    = (  0,   0, 100, 255)
 TEXTSHADOWCOLOR = GRAY
 TEXTCOLOR = WHITE
 BGCOLOR = DARKBLUE
+
+# printout size
+print_2x6 = True
+print_2up = True
+print_width = 2 if print_2x6 else 4 #inches
+print_height = 6 #inches
+print_w_dpi = 330
+print_h_dpi = 330
+print_size = (print_width * print_w_dpi, print_height * print_h_dpi)
 
 # layout - each "grid" is 8x8px at 640x480
 grid_width = 80
@@ -49,14 +60,41 @@ preview_resolution = (400,300)
 preview_alpha  = 200
 blank_thumb = (20,20,20,255)
 
+# GPIO 
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+io_start_bttn  = 12
+io_start_light = 26
+io_enter_bttn  = 16
+io_enter_light = 19
+io_up_bttn     = 20
+io_up_light    = 5
+io_dn_bttn     = 21
+io_dn_light    = 6
+
+# setup GPIO
+GPIO.setup(io_start_bttn, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+GPIO.setup(io_enter_bttn, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+GPIO.setup(io_up_bttn, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+GPIO.setup(io_dn_bttn, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+GPIO.setup(io_start_light, GPIO.OUT)
+GPIO.output(io_start_light, True)
+GPIO.setup(io_enter_light, GPIO.OUT)
+GPIO.output(io_enter_light, True)
+GPIO.setup(io_up_light, GPIO.OUT)
+GPIO.output(io_up_light, True)
+GPIO.setup(io_dn_light, GPIO.OUT)
+GPIO.output(io_dn_light, True)
+
+
 def main():
     global FPSCLOCK, DISPLAYSURF, BASICFONT, BIGFONT, HUGEFONT, WINDOWWIDTH, WINDOWHEIGHT, CAMERA, GRID_W_PX, GRID_H_PX
     setupDisplay()
     pygame.init()
     WINDOWWIDTH = pygame.display.Info().current_w
-    GRID_W_PX   = WINDOWWIDTH / grid_width
+    GRID_W_PX   = int(WINDOWWIDTH / grid_width)
     WINDOWHEIGHT = pygame.display.Info().current_h
-    GRID_H_PX    = WINDOWHEIGHT / grid_height
+    GRID_H_PX    = int(WINDOWHEIGHT / grid_height)
     FPSCLOCK = pygame.time.Clock()
     pygame.mouse.set_visible(False) #hide the mouse cursor
     DISPLAYSURF = pygame.display.set_mode((WINDOWWIDTH, WINDOWHEIGHT), pygame.FULLSCREEN, 32)
@@ -66,24 +104,49 @@ def main():
     pygame.display.set_caption('Photobooth')
     
     CAMERA = picamera.PiCamera()
-    
+    CAMERA.drc_strength = ('medium')
     showTextScreen('Photobooth','Loading...')
 
     loadThumbs()
+    GPIO.add_event_detect(io_start_bttn, GPIO.FALLING, callback=buttonEvent, bouncetime=1000)
+    GPIO.add_event_detect(io_enter_bttn, GPIO.FALLING, callback=buttonEvent, bouncetime=1000)
+    GPIO.add_event_detect(io_up_bttn, GPIO.FALLING, callback=buttonEvent, bouncetime=1000)
+    GPIO.add_event_detect(io_dn_bttn, GPIO.FALLING, callback=buttonEvent, bouncetime=1000)
+    pygame.event.clear()
+    
     while True:
         #checkForQuit()
+        GPIO.output(io_start_light, False)
+        GPIO.output(io_enter_light, False)
+        GPIO.output(io_up_light, False)
+        GPIO.output(io_dn_light, False)
         for event in pygame.event.get():
             if event.type == KEYDOWN:
                 if event.key == K_ESCAPE:
-                    terminate() # terminate if the KEYDOWN event was for the Esc key
+                    terminate() # terminate if the KEYUP event was for the Esc key
                 elif event.key == K_SPACE:
-                    DISPLAYSURF.fill(WHITE)
-                    pygame.display.update()
-                    print 'Take Photos'
+                    pygame.event.clear()
+                    #print 'Take Photos'
                     photoShoot(4)
+                    pygame.event.clear()
+
         idleScreen()
     
     terminate()
+    
+# Turn GPIO (button) events into pygame key down events
+def buttonEvent(channel):
+    if channel == io_start_bttn:
+        event = pygame.event.Event(KEYDOWN, key = K_SPACE)
+    elif channel == io_enter_bttn:
+        event = pygame.event.Event(KEYDOWN, key = K_RETURN)
+    elif channel == io_up_bttn:
+        event = pygame.event.Event(KEYDOWN, key = K_UP)
+    elif channel == io_dn_bttn:
+        event = pygame.event.Event(KEYDOWN, key = K_DOWN)
+    else:
+        event = pygame.event.Event(NOEVENT)
+    pygame.event.post(event)
     
 def photoShoot(numPhotos):
     image = []
@@ -110,41 +173,56 @@ def photoShoot(numPhotos):
             time.sleep(0.7)
         DISPLAYSURF.fill(BLACK)
         pygame.display.update()
-        #showTextScreen('Taking Photo ' + str(photo+1),'Taking ' + str(numPhotos) + ' Photos Total')
+        showTextScreen('Taking Photo ' + str(photo+1),'Taking ' + str(numPhotos) + ' Photos Total')
         image.append(takePhoto())
-    DISPLAYSURF.fill(BLACK)
+        #last_photo = takePhoto()
+        #image.append(last_photo)
+        #image[0].save("testyx.jpg","JPEG",quality=100)
+        DISPLAYSURF.fill(BLACK)
     pygame.display.update()
     CAMERA.stop_preview()
     showTextScreen('Photobooth','Processing...')
-    for rawimage in image:
-        processPhoto(rawimage)
-        updateThumb(rawimage)
+    processPhoto(image)
+    #for rawimage in image:
+    #    processPhoto(rawimage)
+        #updateThumb(rawimage)
+    
+    printPhoto('test')
     
     CAMERA.resolution = preview_resolution
     CAMERA.preview_fullscreen = False
     CAMERA.start_preview()
     
-def processPhoto(photo):
-    photo_edit = pgmagick.Image(photo)
-    photo_edit.quality(100)
-    photo_edit.scale(str(thumb_size[0])+'x'+str(thumb_size[1]))
-    photo_edit.write(thumb_loc+'1.jpg')
-    #updateThumb(thumb_loc+'1.jpg')
-    print 'photo processed'
+def processPhoto(photos):
+    montage = Image.new('RGB',print_size,WHITE)
+    paste_y = 0
+    for photo in photos:
+        photo_w = print_size[0]
+        photo_h = int(photo_w * (photo.size[1] / photo.size[0]))
+        resized = photo.resize((photo_w,photo_h),Image.ANTIALIAS)
+        montage.paste(resized,(0,paste_y))
+        paste_y += photo_h
+    montage.save("test_image.jpg","JPEG",quality=100)
     
+    
+def printPhoto(photo):
+    showTextScreen('Printing','2 copies')
+    time.sleep(5)
+
 def takePhoto():
-    CAMERA.stop_preview()
-    CAMERA.resolution = (2592,1944)
-    tmp_name = int(time.time())
-    tmp_name = '/usr/photobooth/raw_images/' + str(tmp_name) + '.jpg'
-    CAMERA.led = True
-    CAMERA.capture(tmp_name,'jpeg',False, None, None,quality=100)
-    CAMERA.led = False
-    CAMERA.resolution = preview_resolution
-    CAMERA.preview_fullscreen = True
-    CAMERA.start_preview()
-    
-    return tmp_name
+    stream = io.BytesIO() # create an IO stream to save the image to
+    CAMERA.stop_preview() # stop the preview, the preview gets confused with the resolution change
+    CAMERA.resolution = (1296,972) # we will capture the pictures at full resolution
+    CAMERA.led = True # turn on the LED so people know we are taking a picture
+    CAMERA.capture(stream,'jpeg',False, None, None,quality=100) # take the picturee
+    CAMERA.led = False # turn the LED back off, we are done capturing
+    CAMERA.resolution = preview_resolution # set the camera back to the preview resolution
+    CAMERA.preview_fullscreen = True # between captures we show a full screen preview
+    CAMERA.start_preview() # start the preview again
+    stream.seek(0) # "rewind" the IO stream
+    photo = Image.open(stream) # create a PIL image to pass for processing
+    #photo.save("testyx.jpg","JPEG",quality=100)
+    return photo
 
 def idleScreen():
     global thumb_last_sw
@@ -195,12 +273,12 @@ def updateThumb(image):
         os.rename(thumb_loc+str(i)+'.jpg',thumb_loc+str(i+1)+'.jpg')
         #except:
         #    continue
-    photo_edit = pgmagick.Image(image)
-    photo_edit.quality(100)
-    photo_edit.scale(str(thumb_size[0])+'x'+str(thumb_size[1]))
-    photo_edit.write(thumb_loc+'1.jpg')
-    thumb_strip[0] = pygame.image.load(image).convert()
-    thumb_strip[0] = pygame.transform.smoothscale(thumb_strip[0],thumb_size)
+#    photo_edit = pgmagick.Image(image)
+#    photo_edit.quality(100)
+#    photo_edit.scale(str(thumb_size[0])+'x'+str(thumb_size[1]))
+#    photo_edit.write(thumb_loc+'1.jpg')
+#    thumb_strip[0] = pygame.image.load(image).convert()
+#    thumb_strip[0] = pygame.transform.smoothscale(thumb_strip[0],thumb_size)
         
 def loadThumbs():
     global thumb_strip
@@ -223,6 +301,14 @@ def terminate():
     pygame.quit()
     sys.exit()
 
+def powerOff():
+    CAMERA.stop_preview()
+    CAMERA.close()
+    showTextScreen('Shutting Down','')
+    pygame.quit()
+    os.system('poweroff')
+    sys.exit()
+    
 def checkForQuit():
     for event in pygame.event.get(QUIT): # get all the QUIT events
         terminate() # terminate if any QUIT events are present
@@ -233,6 +319,7 @@ def checkForQuit():
 
 def showTextScreen(text, text2):
     # This function displays large text in the
+    DISPLAYSURF.fill(BLACK)
     
     # Draw the text drop shadow
     titleSurf, titleRect = makeTextObjs(text, BIGFONT, TEXTSHADOWCOLOR)
