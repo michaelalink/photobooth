@@ -1,6 +1,6 @@
 #!/usr/bin/python
 from __future__ import division
-import os, pygame, time, picamera, io, sys, Image
+import os, pygame, time, picamera, io, sys, Image, cups, shutil
 from pygame.locals import *
 import RPi.GPIO as GPIO
 
@@ -16,13 +16,17 @@ TEXTCOLOR = WHITE
 BGCOLOR = DARKBLUE
 
 # printout size
-print_2x6 = True
-print_2up = True
-print_width = 2 if print_2x6 else 4 #inches
-print_height = 6 #inches
+print_2x6 = False
+print_2up = False
+print_width = 2 if print_2x6 else 6 #inches
+print_height = 6 if print_2x6 else 4 #inches
 print_w_dpi = 330
 print_h_dpi = 330
 print_size = (print_width * print_w_dpi, print_height * print_h_dpi)
+
+#printer
+printer_name = "Sony_UP-DR200"
+printer_copies = 1
 
 # layout - each "grid" is 8x8px at 640x480
 grid_width = 80
@@ -56,21 +60,22 @@ thumb_index = 1
 thumb_loc = '/usr/photobooth/photos_thumb/'
 thumb_strip = []
 
-preview_resolution = (400,300)
+preview_resolution = (1296,972)
 preview_alpha  = 200
 blank_thumb = (20,20,20,255)
 
 # GPIO 
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
-io_start_bttn  = 12
-io_start_light = 26
+io_start_bttn  = 26
+io_start_light = 21
 io_enter_bttn  = 16
 io_enter_light = 19
 io_up_bttn     = 20
 io_up_light    = 5
-io_dn_bttn     = 21
+io_dn_bttn     = 12
 io_dn_light    = 6
+io_cameara_led = 18
 
 # setup GPIO
 GPIO.setup(io_start_bttn, GPIO.IN, pull_up_down = GPIO.PUD_UP)
@@ -78,14 +83,15 @@ GPIO.setup(io_enter_bttn, GPIO.IN, pull_up_down = GPIO.PUD_UP)
 GPIO.setup(io_up_bttn, GPIO.IN, pull_up_down = GPIO.PUD_UP)
 GPIO.setup(io_dn_bttn, GPIO.IN, pull_up_down = GPIO.PUD_UP)
 GPIO.setup(io_start_light, GPIO.OUT)
-GPIO.output(io_start_light, True)
+GPIO.output(io_start_light, False)
 GPIO.setup(io_enter_light, GPIO.OUT)
 GPIO.output(io_enter_light, True)
 GPIO.setup(io_up_light, GPIO.OUT)
 GPIO.output(io_up_light, True)
 GPIO.setup(io_dn_light, GPIO.OUT)
 GPIO.output(io_dn_light, True)
-
+GPIO.setup(io_cameara_led, GPIO.OUT)
+GPIO.output(io_cameara_led, True)
 
 def main():
     global FPSCLOCK, DISPLAYSURF, BASICFONT, BIGFONT, HUGEFONT, WINDOWWIDTH, WINDOWHEIGHT, CAMERA, GRID_W_PX, GRID_H_PX
@@ -120,30 +126,38 @@ def main():
         GPIO.output(io_enter_light, False)
         GPIO.output(io_up_light, False)
         GPIO.output(io_dn_light, False)
+        GPIO.output(io_cameara_led, False)
         for event in pygame.event.get():
             if event.type == KEYDOWN:
+                GPIO.output(io_start_light, False)
                 if event.key == K_ESCAPE:
-                    terminate() # terminate if the KEYUP event was for the Esc key
+                    pygame.event.clear()
+                    powerOff() # terminate if the KEYUP event was for the Esc key
                 elif event.key == K_SPACE:
                     pygame.event.clear()
-                    #print 'Take Photos'
                     photoShoot(4)
                     pygame.event.clear()
-
+                elif event.key == K_e:
+                    pygame.event.clear()
+                    terminate()
+        GPIO.output(io_start_light, True)
         idleScreen()
-    
     terminate()
     
 # Turn GPIO (button) events into pygame key down events
 def buttonEvent(channel):
-    if channel == io_start_bttn:
-        event = pygame.event.Event(KEYDOWN, key = K_SPACE)
-    elif channel == io_enter_bttn:
-        event = pygame.event.Event(KEYDOWN, key = K_RETURN)
-    elif channel == io_up_bttn:
-        event = pygame.event.Event(KEYDOWN, key = K_UP)
-    elif channel == io_dn_bttn:
-        event = pygame.event.Event(KEYDOWN, key = K_DOWN)
+    #time.sleep(0.001)
+    if GPIO.input(channel) == 1 :
+        if channel == io_start_bttn:
+            event = pygame.event.Event(KEYDOWN, key = K_SPACE)
+        elif channel == io_enter_bttn:
+            event = pygame.event.Event(KEYDOWN, key = K_RETURN)
+        elif channel == io_up_bttn:
+            event = pygame.event.Event(KEYDOWN, key = K_UP)
+        elif channel == io_dn_bttn:
+            event = pygame.event.Event(KEYDOWN, key = K_DOWN)
+        else:
+            event = pygame.event.Event(NOEVENT)
     else:
         event = pygame.event.Event(NOEVENT)
     pygame.event.post(event)
@@ -157,11 +171,12 @@ def photoShoot(numPhotos):
     readyRect.midbottom = (WINDOWWIDTH/2,WINDOWHEIGHT/10*9)
     DISPLAYSURF.blit(readySurf, readyRect)
     pygame.display.update()
-    time.sleep(1)
+    time.sleep(3)
     
     for photo in range (0,numPhotos):
         time.sleep(0.1)
-        for i in range (3,0,-1):
+        # Count down loop, shows big numbers on the screen
+        for i in range (5,0,-1):
             DISPLAYSURF.fill(BLACK)
             numSurf, numRect = makeTextObjs(str(i), HUGEFONT, WHITE)
             numRect.center = (WINDOWWIDTH/2,WINDOWHEIGHT/2- GRID_H_PX)
@@ -170,55 +185,83 @@ def photoShoot(numPhotos):
             numphotosRect.midbottom = (WINDOWWIDTH / 2, WINDOWHEIGHT - GRID_H_PX * 4)
             DISPLAYSURF.blit(numphotosSurf, numphotosRect)
             pygame.display.update()
-            time.sleep(0.7)
+            time.sleep(0.7) # each number shows for this amount of time
+        # Clear the Screen
         DISPLAYSURF.fill(BLACK)
+        takephotoSurf, takephotoRect = makeTextObjs('Taking Photo ' + str(photo+1),BIGFONT,WHITE)
+        takephotoRect.midbottom = (WINDOWWIDTH/2,WINDOWHEIGHT/10*9)
+        DISPLAYSURF.blit(takephotoSurf, takephotoRect)
         pygame.display.update()
-        showTextScreen('Taking Photo ' + str(photo+1),'Taking ' + str(numPhotos) + ' Photos Total')
-        image.append(takePhoto())
-        #last_photo = takePhoto()
-        #image.append(last_photo)
-        #image[0].save("testyx.jpg","JPEG",quality=100)
-        DISPLAYSURF.fill(BLACK)
+        image.append(takePhoto()) # take the photo
+    DISPLAYSURF.fill(BLACK) # clear the screen
     pygame.display.update()
     CAMERA.stop_preview()
     showTextScreen('Photobooth','Processing...')
     processPhoto(image)
-    #for rawimage in image:
-    #    processPhoto(rawimage)
-        #updateThumb(rawimage)
-    
-    printPhoto('test')
-    
+    printPhoto('/usr/photobooth/print_image.jpg',image)
     CAMERA.resolution = preview_resolution
     CAMERA.preview_fullscreen = False
     CAMERA.start_preview()
     
 def processPhoto(photos):
-    montage = Image.new('RGB',print_size,WHITE)
+    save_name = str(time.time())
+    montage = Image.new('RGBA',print_size,WHITE)
+    paste_x = 0
     paste_y = 0
-    for photo in photos:
-        photo_w = print_size[0]
-        photo_h = int(photo_w * (photo.size[1] / photo.size[0]))
-        resized = photo.resize((photo_w,photo_h),Image.ANTIALIAS)
-        montage.paste(resized,(0,paste_y))
-        paste_y += photo_h
-    montage.save("test_image.jpg","JPEG",quality=100)
+    if print_2x6 :
+        for photo in photos:
+            photo_w = print_size[0]
+            photo_h = int(photo_w * (photo.size[1] / photo.size[0]))
+            resized = photo.resize((photo_w,photo_h),Image.ANTIALIAS)
+            montage.paste(resized,(0,paste_y))
+            paste_y += photo_h
+    else:
+        for photo in photos:
+            photo.save('/usr/photobooth/raw_images/'+save_name+'-'+str(paste_x)+str(paste_y)+'.jpg','JPEG',quality=80)
+            photo_h = int(print_size[1]/2)
+            photo_w = int(photo_h * (photo.size[0] / photo.size[1]))-10
+            resized = photo.resize((photo_w,photo_h),Image.ANTIALIAS)
+            montage.paste(resized,(paste_x+20,paste_y))
+            if paste_x == 0 and paste_y == 0 :
+                paste_x = photo_w
+            elif paste_x > 0 and paste_y == 0 :
+                paste_x = 0
+                paste_y = photo_h
+            else :
+                paste_x = photo_w
+                paste_y = photo_h
+        # logo = Image.open("/usr/photobooth/4x6_logo.jpg")
+        # montage.paste(logo,(print_size[0]-220-20,0))
+    montage.save("/usr/photobooth/print_image.jpg","JPEG",quality=100)
+    shutil.copyfile("/usr/photobooth/print_image.jpg","/usr/photobooth/montages/" + str(time.time()) + ".jpg")
     
-    
-def printPhoto(photo):
-    showTextScreen('Printing','2 copies')
+def printPhoto(photo,photos):
+    printer_conn = cups.Connection()
+    ################################################################################################################################
+    printer_conn.printFile(printer_name, photo, "PhotoBooth",{"copies": str(printer_copies)})
+    displayImage(photo)
+    time.sleep(10)
+    updateThumb(photos[0])
+    showTextScreen('Printing',str(printer_copies) + ' copies')
     time.sleep(5)
 
+def displayImage(image):
+    image = pygame.transform.scale(pygame.image.load(image),(WINDOWWIDTH,WINDOWHEIGHT))
+    DISPLAYSURF.blit(image,(0,0))
+    pygame.display.update()
+    
 def takePhoto():
     stream = io.BytesIO() # create an IO stream to save the image to
-    CAMERA.stop_preview() # stop the preview, the preview gets confused with the resolution change
-    CAMERA.resolution = (1296,972) # we will capture the pictures at full resolution
-    CAMERA.led = True # turn on the LED so people know we are taking a picture
-    CAMERA.capture(stream,'jpeg',False, None, None,quality=100) # take the picturee
-    CAMERA.led = False # turn the LED back off, we are done capturing
-    CAMERA.resolution = preview_resolution # set the camera back to the preview resolution
-    CAMERA.preview_fullscreen = True # between captures we show a full screen preview
-    CAMERA.start_preview() # start the preview again
+    #CAMERA.stop_preview() # stop the preview, the preview gets confused with the resolution change
+    #CAMERA.resolution = (1296,972) # we will capture the pictures at full resolution
+    #CAMERA.led = True # turn on the LED so people know we are taking a picture
+    GPIO.output(io_cameara_led, True)
+    CAMERA.capture(stream,'jpeg',False, None, None,quality=100) # take the picture
+    GPIO.output(io_cameara_led, False)
+    #CAMERA.led = False # turn the LED back off, we are done capturing
+    #CAMERA.resolution = preview_resolution # set the camera back to the preview resolution
+    #CAMERA.preview_fullscreen = True # between captures we show a full screen preview
+    #CAMERA.start_preview() # start the preview again
     stream.seek(0) # "rewind" the IO stream
     photo = Image.open(stream) # create a PIL image to pass for processing
     #photo.save("testyx.jpg","JPEG",quality=100)
@@ -269,16 +312,17 @@ def updateThumb(image):
         except:
             thumb_strip[i] = pygame.Surface(thumb_size)
             thumb_strip[i].fill(blank_thumb)
-        #try:
-        os.rename(thumb_loc+str(i)+'.jpg',thumb_loc+str(i+1)+'.jpg')
-        #except:
-        #    continue
+        try:
+            os.rename(thumb_loc+str(i)+'.jpg',thumb_loc+str(i+1)+'.jpg')
+        except:
+            continue
+    image.save(thumb_loc+str(1)+'.jpg')
 #    photo_edit = pgmagick.Image(image)
 #    photo_edit.quality(100)
 #    photo_edit.scale(str(thumb_size[0])+'x'+str(thumb_size[1]))
 #    photo_edit.write(thumb_loc+'1.jpg')
-#    thumb_strip[0] = pygame.image.load(image).convert()
-#    thumb_strip[0] = pygame.transform.smoothscale(thumb_strip[0],thumb_size)
+    thumb_strip[0] = pygame.image.load(thumb_loc+str(1)+'.jpg').convert()
+    thumb_strip[0] = pygame.transform.smoothscale(thumb_strip[0],thumb_size)
         
 def loadThumbs():
     global thumb_strip
@@ -314,7 +358,7 @@ def checkForQuit():
         terminate() # terminate if any QUIT events are present
     for event in pygame.event.get(KEYUP): # get all the KEYUP events
         if event.key == K_ESCAPE:
-            terminate() # terminate if the KEYUP event was for the Esc key
+            powerOff() # terminate if the KEYUP event was for the Esc key
         pygame.event.post(event) # put the other KEYUP event objects back
 
 def showTextScreen(text, text2):
