@@ -230,14 +230,14 @@ def processPhoto(photos):
             else :
                 paste_x = photo_w
                 paste_y = photo_h
-        # logo = Image.open("/usr/photobooth/4x6_logo.jpg")
-        # montage.paste(logo,(print_size[0]-220-20,0))
+        logo = Image.open("/usr/photobooth/4x6_logo.jpg")
+        montage.paste(logo,(print_size[0]-220-20,0))
     montage.save("/usr/photobooth/print_image.jpg","JPEG",quality=100)
     shutil.copyfile("/usr/photobooth/print_image.jpg","/usr/photobooth/montages/" + str(time.time()) + ".jpg")
     
 def printPhoto(photo,photos):
     printer_conn = cups.Connection()
-    ################################################################################################################################
+    #################################################################################
     printer_conn.printFile(printer_name, photo, "PhotoBooth",{"copies": str(printer_copies)})
     displayImage(photo)
     time.sleep(10)
@@ -252,19 +252,11 @@ def displayImage(image):
     
 def takePhoto():
     stream = io.BytesIO() # create an IO stream to save the image to
-    #CAMERA.stop_preview() # stop the preview, the preview gets confused with the resolution change
-    #CAMERA.resolution = (1296,972) # we will capture the pictures at full resolution
-    #CAMERA.led = True # turn on the LED so people know we are taking a picture
     GPIO.output(io_cameara_led, True)
     CAMERA.capture(stream,'jpeg',False, None, None,quality=100) # take the picture
     GPIO.output(io_cameara_led, False)
-    #CAMERA.led = False # turn the LED back off, we are done capturing
-    #CAMERA.resolution = preview_resolution # set the camera back to the preview resolution
-    #CAMERA.preview_fullscreen = True # between captures we show a full screen preview
-    #CAMERA.start_preview() # start the preview again
     stream.seek(0) # "rewind" the IO stream
     photo = Image.open(stream) # create a PIL image to pass for processing
-    #photo.save("testyx.jpg","JPEG",quality=100)
     return photo
 
 def idleScreen():
